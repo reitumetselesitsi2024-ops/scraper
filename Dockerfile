@@ -1,10 +1,13 @@
 FROM python:3.11-slim
 
-# Install Chromium and dependencies
+# Install Chromium and ChromeDriver (matching versions from apt)
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-driver \
     && rm -rf /var/lib/apt/lists/*
+
+# Verify installations
+RUN chromium --version && chromedriver --version
 
 WORKDIR /app
 COPY requirements.txt .
