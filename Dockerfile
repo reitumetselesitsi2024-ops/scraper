@@ -1,24 +1,26 @@
 FROM python:3.11-slim
 
+# Install Chrome and ChromeDriver from Google's official repository
 RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-driver \
     wget \
+    gnupg \
     unzip \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# Completely remove any selenium cache directories
-RUN rm -rf /root/.cache/selenium
-RUN rm -rf /tmp/selenium
+# Install ChromeDriver matching the Chrome version
+RUN wget -O /tmp/chromedriver.zip https://storage.googleapis.com/chrome-for-testing-public/121.0.6167.85/linux64/chromedriver-linux64.zip \
+    && unzip /tmp/chromedriver.zip -d /tmp/ \
+    && mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/ \
+    && chmod +x /usr/local/bin/chromedriver \
+    && rm -rf /tmp/*
 
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-
-# Set environment variables to block selenium from downloading drivers
-ENV SELENIUM_DRIVER_MANAGER=0
-ENV WDM_DISABLE=1
-ENV SE_DRIVER_MANAGER=0
 
 CMD ["python", "main.py"]
