@@ -148,11 +148,8 @@ def perform_scrape():
         chrome_path = result.stdout.strip()
         print(f"Chromium path: {chrome_path}")
         
-        result = subprocess.run([chromedriver_path, '--version'], capture_output=True, text=True)
-        print(f"Chromedriver version: {result.stdout.strip()}")
-        
-        result = subprocess.run([chrome_path, '--version'], capture_output=True, text=True)
-        print(f"Chromium version: {result.stdout.strip()}")
+        # Set environment variables
+        os.environ['PATH'] = '/usr/bin:' + os.environ.get('PATH', '')
         
         options = Options()
         options.add_argument('--headless')
@@ -162,10 +159,8 @@ def perform_scrape():
         options.add_argument('--disable-gpu')
         options.binary_location = chrome_path
         
-        from selenium.webdriver.chrome.service import Service
-        service = Service(executable_path=chromedriver_path)
-        
-        driver = webdriver.Chrome(service=service, options=options)
+        # Selenium 3 syntax
+        driver = webdriver.Chrome(executable_path=chromedriver_path, options=options)
         print("✅ Chrome ready!")
         
         results = scrape_data(driver)
