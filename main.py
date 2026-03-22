@@ -145,10 +145,11 @@ def perform_scrape():
         options.add_argument('--disable-gpu')
         options.binary_location = '/usr/bin/chromium'
         
-        # Disable Selenium Manager - force use of system chromedriver
-        os.environ['SELENIUM_MANAGER'] = '0'
+        # Force use of system chromedriver
+        from selenium.webdriver.chrome.service import Service
+        service = Service('/usr/bin/chromedriver')
         
-        service = Service(executable_path='/usr/bin/chromedriver')
+        # Create driver with service
         driver = webdriver.Chrome(service=service, options=options)
         print("✅ Chrome ready")
         
@@ -163,7 +164,6 @@ def perform_scrape():
     finally:
         if driver:
             driver.quit()
-
 def run_scraping_loop():
     consecutive_failures = 0
     iteration = 0
