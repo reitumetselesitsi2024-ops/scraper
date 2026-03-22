@@ -137,19 +137,32 @@ def perform_scrape():
     driver = None
     
     try:
+        # Force webdriver to use system chromedriver
+        import subprocess
+        result = subprocess.run(['which', 'chromedriver'], capture_output=True, text=True)
+        chromedriver_path = result.stdout.strip()
+        print(f"🔍 Found chromedriver at: {chromedriver_path}")
+        
+        result = subprocess.run(['which', 'chromium'], capture_output=True, text=True)
+        chrome_path = result.stdout.strip()
+        print(f"🔍 Found chromium at: {chrome_path}")
+        
         options = Options()
         options.add_argument('--headless')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-gpu')
-        options.binary_location = '/usr/bin/chromium'
+        options.binary_location = chrome_path
         
-        # Force use of system chromedriver
+        # Create service with explicit path
         from selenium.webdriver.chrome.service import Service
-        service = Service('/usr/bin/chromedriver')
+        service = Service(executable_path=chromedriver_path)
         
-        # Create driver with service
+        # Disable Selenium Manager entirely
+        import os
+        os.environ['SELENIUM_DRIVER_MANAGER'] = '0'
+        
         driver = webdriver.Chrome(service=service, options=options)
         print("✅ Chrome ready")
         
