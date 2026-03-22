@@ -139,12 +139,19 @@ def perform_scrape():
     try:
         print("🔍 Checking Chrome installations...")
         
-        # Verify chromedriver works
         import subprocess
-        result = subprocess.run(['/usr/bin/chromedriver', '--version'], capture_output=True, text=True)
+        result = subprocess.run(['which', 'chromedriver'], capture_output=True, text=True)
+        chromedriver_path = result.stdout.strip()
+        print(f"Chromedriver path: {chromedriver_path}")
+        
+        result = subprocess.run(['which', 'chromium'], capture_output=True, text=True)
+        chrome_path = result.stdout.strip()
+        print(f"Chromium path: {chrome_path}")
+        
+        result = subprocess.run([chromedriver_path, '--version'], capture_output=True, text=True)
         print(f"Chromedriver version: {result.stdout.strip()}")
         
-        result = subprocess.run(['/usr/bin/chromium', '--version'], capture_output=True, text=True)
+        result = subprocess.run([chrome_path, '--version'], capture_output=True, text=True)
         print(f"Chromium version: {result.stdout.strip()}")
         
         options = Options()
@@ -153,18 +160,13 @@ def perform_scrape():
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-gpu')
-        options.binary_location = '/usr/bin/chromium'
+        options.binary_location = chrome_path
         
-        # Use the system chromedriver directly
         from selenium.webdriver.chrome.service import Service
-        service = Service('/usr/bin/chromedriver')
-        
-        # Override the path that selenium looks for
-        import os
-        os.environ['PATH'] = '/usr/bin:' + os.environ.get('PATH', '')
+        service = Service(executable_path=chromedriver_path)
         
         driver = webdriver.Chrome(service=service, options=options)
-        print("✅ Chrome ready")
+        print("✅ Chrome ready!")
         
         results = scrape_data(driver)
         return True, len(results)
