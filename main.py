@@ -3,7 +3,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 import time
 import json
@@ -11,6 +10,7 @@ import os
 import re
 from datetime import datetime, timedelta
 import traceback
+import subprocess
 
 # ============= CONFIGURATION =============
 SCRAPE_INTERVAL_MINUTES = 15
@@ -137,7 +137,27 @@ def perform_scrape():
     driver = None
     
     try:
-        print("🔍 Starting Chrome...")
+        print("🔍 Finding Chrome and ChromeDriver...")
+        
+        # Get actual paths
+        chrome_path = "/usr/bin/chromium"
+        chromedriver_path = "/usr/bin/chromedriver"
+        
+        # Verify they exist
+        if not os.path.exists(chrome_path):
+            print(f"❌ Chrome not found at {chrome_path}")
+            return False, 0
+        
+        if not os.path.exists(chromedriver_path):
+            print(f"❌ ChromeDriver not found at {chromedriver_path}")
+            return False, 0
+        
+        # Get versions
+        result = subprocess.run([chrome_path, "--version"], capture_output=True, text=True)
+        print(f"Chrome: {result.stdout.strip()}")
+        
+        result = subprocess.run([chromedriver_path, "--version"], capture_output=True, text=True)
+        print(f"ChromeDriver: {result.stdout.strip()}")
         
         options = Options()
         options.add_argument('--headless')
@@ -145,10 +165,9 @@ def perform_scrape():
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-gpu')
-        options.binary_location = '/usr/bin/chromium'
+        options.binary_location = chrome_path
         
-        # Use webdriver-manager to handle chromedriver automatically
-        service = Service(ChromeDriverManager().install())
+        service = Service(chromedriver_path)
         
         driver = webdriver.Chrome(service=service, options=options)
         print("✅ Chrome ready!")
@@ -227,3 +246,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+        
