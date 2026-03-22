@@ -5,12 +5,12 @@ RUN apt-get update && apt-get install -y \
     chromium-driver \
     && rm -rf /var/lib/apt/lists/*
 
-# Verify installations
-RUN chromium --version && chromedriver --version
+# Remove any cached selenium drivers
+RUN rm -rf /root/.cache/selenium
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 CMD ["python", "main.py"]
