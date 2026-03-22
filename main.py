@@ -3,6 +3,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 import time
 import json
 import os
@@ -16,12 +17,10 @@ SCRAPE_INTERVAL_MINUTES = 15
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 30
 MAX_CONSECUTIVE_FAILURES = 5
-DUPLICATE_TIME_THRESHOLD_HOURS = 2
 JSON_FILENAME = "results.json"
 # ==========================================
 
 def extract_numbers_from_balls(balls_div):
-    """Extract numbers from balls container"""
     numbers = []
     buttons = balls_div.find_elements(By.TAG_NAME, "button")
     for button in buttons:
@@ -31,7 +30,6 @@ def extract_numbers_from_balls(balls_div):
     return numbers
 
 def load_existing_data():
-    """Load existing data from JSON file"""
     if os.path.exists(JSON_FILENAME):
         try:
             with open(JSON_FILENAME, 'r', encoding='utf-8') as f:
@@ -42,7 +40,6 @@ def load_existing_data():
     return []
 
 def save_results(results):
-    """Save results to JSON file - IDENTICAL format to prediction code"""
     results.sort(key=lambda x: x.get('round_number', 0), reverse=True)
     json_data = {
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -51,68 +48,67 @@ def save_results(results):
     }
     with open(JSON_FILENAME, 'w', encoding='utf-8') as f:
         json.dump(json_data, f, indent=2, ensure_ascii=False)
-    print(f"💾 Saved {len(results)} total rounds to {JSON_FILENAME}")
+    print(f"💾 Saved {len(results)} total rounds")
     return len(results)
 
 def scrape_data(driver):
-    """Scrape all lottery data from website"""
     print("\n📡 SCRAPING DATA...")
-
+    
     driver.get('https://www.simacombet.com/luckysix')
     time.sleep(3)
-
+    
     iframe = WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.ID, "PluginLuckySix"))
     )
     driver.switch_to.frame(iframe)
-
+    
     button = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Results')]"))
     )
     button.click()
     print("✅ Results button clicked")
     time.sleep(3)
-
+    
     round_rows = driver.find_elements(By.CSS_SELECTOR, "div.round-row")
     print(f"✅ Found {len(round_rows)} rounds")
-
+    
     existing_results = load_existing_data()
     existing_round_nums = {r.get('round_number'): r for r in existing_results}
     new_results = []
-
+    
     for i in range(len(round_rows) - 1, -1, -1):
         rows = driver.find_elements(By.CSS_SELECTOR, "div.round-row")
         current_row = rows[i]
-
+        
         title_element = current_row.find_element(By.CSS_SELECTOR, "div.accordion-title")
         title_text = title_element.text.strip()
         round_num = re.search(r'Round\s*(\d+)', title_text)
         round_num = int(round_num.group(1)) if round_num else None
-
+        
         if round_num in existing_round_nums:
             continue
-
+        
         driver.execute_script("arguments[0].scrollIntoView();", current_row)
         time.sleep(0.5)
         current_row.click()
         time.sleep(2)
-
+        
         try:
             draw_sequences = driver.find_elements(By.CSS_SELECTOR, "div.draw-sequence")
             first_draw_numbers = []
             second_draw_numbers = []
-
+            
             for seq in draw_sequences:
                 seq_title = seq.find_element(By.CSS_SELECTOR, "div.title").text.lower()
                 balls_containers = seq.find_elements(By.CSS_SELECTOR, "div.balls")
-
+                
                 if "drawn" in seq_title:
                     for container in balls_containers:
                         first_draw_numbers.extend(extract_numbers_from_balls(container))
                 elif "bonus" in seq_title:
                     if balls_containers:
                         second_draw_numbers = extract_numbers_from_balls(balls_containers[0])
-
+            
             result = {
                 'round_number': int(round_num),
                 'round_title': title_text,
@@ -122,25 +118,24 @@ def scrape_data(driver):
             }
             new_results.append(result)
             print(f"✅ Round {round_num} saved")
-
+            
         except Exception as e:
             print(f"❌ Error on Round {round_num}: {e}")
-
+        
         current_row.click()
         time.sleep(1)
-
+    
     all_results = new_results + existing_results
     save_results(all_results)
-
+    
     if new_results:
         print(f"   New rounds added: {len(new_results)}")
-
+    
     return all_results
 
 def perform_scrape():
-    """Perform single scrape operation - FIXED FOR RAILWAY"""
     driver = None
-
+    
     try:
         options = Options()
         options.add_argument('--headless')
@@ -148,53 +143,51 @@ def perform_scrape():
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-gpu')
-
-        # Railway/Nixpacks uses chromium at this path
+        
         options.binary_location = '/usr/bin/chromium'
-
-        driver = webdriver.Chrome(options=options)
+        service = Service('/usr/bin/chromedriver')
+        
+        driver = webdriver.Chrome(service=service, options=options)
         print("✅ Chrome ready")
-
+        
         results = scrape_data(driver)
         return True, len(results)
-
+        
     except Exception as e:
         print(f"❌ Error: {e}")
         traceback.print_exc()
         return False, 0
-
+        
     finally:
         if driver:
             driver.quit()
 
 def run_scraping_loop():
-    """Main scraping loop with retry logic"""
     consecutive_failures = 0
     iteration = 0
-
+    
     print("=" * 80)
     print("🚀 RAILWAY LOTTERY SCRAPER")
     print("=" * 80)
     print(f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"⏱️  Scrape interval: {SCRAPE_INTERVAL_MINUTES} minutes")
-    print(f"📁 Output file: {JSON_FILENAME}")
     print("=" * 80)
-
+    
     while True:
         iteration += 1
         print(f"\n{'=' * 80}")
         print(f"🔄 ITERATION #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'=' * 80}")
-
+        
         success = False
         total_rounds = 0
-
+        
         for attempt in range(1, MAX_RETRIES + 1):
             print(f"\n📡 Attempt {attempt}/{MAX_RETRIES}")
-
+            
             try:
                 success, total_rounds = perform_scrape()
-
+                
                 if success:
                     print(f"\n✅ Scrape successful! Total rounds: {total_rounds}")
                     consecutive_failures = 0
@@ -204,16 +197,16 @@ def run_scraping_loop():
                     if attempt < MAX_RETRIES:
                         print(f"⏱️  Retrying in {RETRY_DELAY_SECONDS} seconds...")
                         time.sleep(RETRY_DELAY_SECONDS)
-
+                        
             except Exception as e:
                 print(f"\n❌ Error: {e}")
                 if attempt < MAX_RETRIES:
                     time.sleep(RETRY_DELAY_SECONDS)
-
+        
         if not success:
             consecutive_failures += 1
             print(f"\n⚠️ Consecutive failures: {consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}")
-
+            
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 print(f"\n❌ Too many consecutive failures. Stopping.")
                 break
@@ -224,13 +217,10 @@ def run_scraping_loop():
             time.sleep(SCRAPE_INTERVAL_MINUTES * 60)
 
 def main():
-    """Main function"""
     try:
         run_scraping_loop()
     except KeyboardInterrupt:
-        print(f"\n\n🛑 Stopped by user at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    except Exception as e:
-        print(f"\n❌ Fatal error: {e}")
+        print(f"\n\n🛑 Stopped by user")
 
 if __name__ == "__main__":
     main()
