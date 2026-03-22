@@ -1,0 +1,14 @@
+{
+  "build": {
+    "builder": "NIXPACKS",
+    "nixpacksConfig": {
+      "setup": {
+        "aptPkgs": ["chromium", "chromium-driver"]
+      }
+    }
+  },
+  "deploy": {
+    "startCommand": "python main.py",
+    "restartPolicyType": "ON_FAILURE"
+  }
+}
