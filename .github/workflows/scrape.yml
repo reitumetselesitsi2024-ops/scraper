@@ -2,8 +2,8 @@ name: Lottery Scraper
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Runs every 15 minutes
-  workflow_dispatch:  # Allows manual run
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
@@ -15,7 +15,11 @@ jobs:
     - name: Install Chrome
       run: |
         sudo apt-get update
-        sudo apt-get install -y chromium-browser chromium-chromedriver
+        sudo apt-get install -y chromium-browser
+        wget -q https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip
+        unzip chromedriver_linux64.zip
+        sudo mv chromedriver /usr/local/bin/
+        sudo chmod +x /usr/local/bin/chromedriver
     
     - name: Setup Python
       uses: actions/setup-python@v5
