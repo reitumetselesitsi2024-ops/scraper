@@ -229,10 +229,27 @@ def run_scraping_loop():
             time.sleep(SCRAPE_INTERVAL_MINUTES * 60)
 
 def main():
+    print("=" * 80)
+    print("🚀 LOTTERY SCRAPER (GitHub Actions)")
+    print("=" * 80)
+    
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920,1080')
+    
+    # Use system Chrome
+    options.binary_location = '/usr/bin/chromium-browser'
+    
+    driver = webdriver.Chrome(options=options)
+    print("✅ Chrome ready")
+    
     try:
-        run_scraping_loop()
-    except KeyboardInterrupt:
-        print(f"\n\n🛑 Stopped by user")
+        results = scrape_data(driver)
+        print(f"✅ Scraped {len(results)} total rounds")
+    finally:
+        driver.quit()
 
 if __name__ == "__main__":
     main()
