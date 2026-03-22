@@ -143,10 +143,12 @@ def perform_scrape():
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-gpu')
-        
         options.binary_location = '/usr/bin/chromium'
-        service = Service('/usr/bin/chromedriver')
         
+        # Disable Selenium Manager - force use of system chromedriver
+        os.environ['SELENIUM_MANAGER'] = '0'
+        
+        service = Service(executable_path='/usr/bin/chromedriver')
         driver = webdriver.Chrome(service=service, options=options)
         print("✅ Chrome ready")
         
