@@ -5,19 +5,21 @@ RUN apt-get update && apt-get install -y \
     chromium-driver \
     && rm -rf /var/lib/apt/lists/*
 
-# Remove any cached selenium drivers
-RUN rm -rf /root/.cache/selenium
+# Force removal of any selenium cache
+RUN rm -rf /root/.cache/selenium /tmp/selenium
 
-# Create a symlink to ensure system chromedriver is used
-RUN ln -sf /usr/bin/chromedriver /usr/local/bin/chromedriver
+# Set environment variables
+ENV SELENIUM_DRIVER_MANAGER=0
+ENV WDM_DISABLE=1
 
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
-# Set environment variables to disable selenium manager
-ENV SELENIUM_DRIVER_MANAGER=0
-ENV WDM_DISABLE=1
+# Verify installations
+RUN which chromium && which chromedriver
+RUN chromedriver --version
+RUN chromium --version
 
 CMD ["python", "main.py"]
