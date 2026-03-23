@@ -15,16 +15,14 @@ while True:
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--window-size=1920,1080')
-        options.add_argument('--disable-gpu')
-        options.binary_location = '/usr/bin/google-chrome-stable'
+        options.binary_location = '/usr/bin/chromium'
         
         driver = webdriver.Chrome(options=options)
-        print("✅ Chrome started")
+        print("✅ Chromium started")
         
         driver.get(REPLIT_URL)
         print(f"✅ Visited Replit: {driver.title}")
         
-        # Keep the page open for 5 minutes
         time.sleep(300)
         
         driver.quit()
