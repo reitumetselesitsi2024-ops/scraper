@@ -1,20 +1,35 @@
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 import time
 
-URL = "https://ebe8f301-2691-4730-94c7-9cd8eeea02b3-00-1l5p3jcikfpp4.worf.replit.dev"
+# Your Replit URL
+REPLIT_URL = "https://ebe8f301-2691-4730-94c7-9cd8eeea02b3-00-1l5p3jcikfpp4.worf.replit.dev"
 
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Connection': 'keep-alive',
-}
-
-print("🚀 Monitor started. Pinging every 5 minutes...")
+print("🚀 Starting Selenium Keeper...")
+print(f"Target URL: {REPLIT_URL}")
 
 while True:
     try:
-        r = requests.get(URL, headers=headers)
-        print(f"[{time.strftime('%H:%M:%S')}] Status: {r.status_code}")
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--disable-gpu')
+        options.binary_location = '/usr/bin/google-chrome-stable'
+        
+        driver = webdriver.Chrome(options=options)
+        print("✅ Chrome started")
+        
+        driver.get(REPLIT_URL)
+        print(f"✅ Visited Replit: {driver.title}")
+        
+        # Keep the page open for 5 minutes
+        time.sleep(300)
+        
+        driver.quit()
+        print("✅ Session ended, restarting...")
+        
     except Exception as e:
-        print(f"[{time.strftime('%H:%M:%S')}] Error: {e}")
-    time.sleep(300)
+        print(f"❌ Error: {e}")
+        time.sleep(60)
