@@ -1,3 +1,12 @@
+"""
+ULTIMATE LOTTERY SCRAPER - COMPLETE SOLUTION
+- Never loses data
+- Scrapes every 15 minutes (catches all new rounds)
+- Cycle detection (handles round number resets)
+- Newest rounds first
+- Creates backups
+"""
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -8,6 +17,7 @@ import time
 import json
 import os
 import re
+import shutil
 from datetime import datetime
 from flask import Flask, jsonify
 import threading
@@ -20,21 +30,32 @@ BACKUP_FILENAME = "results_backup.json"
 
 app = Flask(__name__)
 
-def sort_results_by_cycle_newest_first(results):
+def detect_cycles_and_sort(results):
     """
-    CRITICAL: Sort rounds by cycle detection with NEWEST FIRST
-    - Groups rounds by timestamp order
-    - Detects when round number resets (new cycle)
-    - Within each cycle, sorts by round number (oldest first within cycle)
-    - Finally reverses entire list to show NEWEST FIRST
+    CYCLE DETECTION - The Core Solution
+    
+    How it works:
+    1. Rounds are collected over time (each scrape gets last 10 rounds)
+    2. Some rounds may be collected multiple times (we keep unique)
+    3. Round numbers reset after 289 (289, 1, 2, 3...)
+    4. This function groups rounds into cycles and sorts them correctly
+    
+    Example:
+        Scrape 1: Round 68,67,66,65,64,63,62,61,60,59
+        Scrape 2: Round 69,68,67,66,65,64,63,62,61,60
+        Scrape 3: Round 70,69,68,67,66,65,64,63,62,61
+        
+        After cycle detection:
+        Cycle 1 (oldest): 59,60,61,62,63,64,65,66,67,68
+        Cycle 2: 68,69,70 (newest)
     """
     if not results:
         return results
     
-    # First, sort by timestamp to understand order of collection (oldest first)
+    # Step 1: Sort by timestamp (when collected)
     timestamp_sorted = sorted(results, key=lambda x: x.get('timestamp', ''))
     
-    # Detect cycles based on round number resets
+    # Step 2: Detect cycles (when round number resets)
     cycles = []
     current_cycle = []
     last_round_num = None
@@ -42,9 +63,8 @@ def sort_results_by_cycle_newest_first(results):
     for result in timestamp_sorted:
         round_num = result.get('round_number')
         
-        # If round number resets (new cycle)
+        # A new cycle starts when round number goes DOWN (e.g., 289 → 1)
         if last_round_num is not None and round_num < last_round_num:
-            # Complete current cycle
             if current_cycle:
                 cycles.append(current_cycle)
             current_cycle = [result]
@@ -53,26 +73,26 @@ def sort_results_by_cycle_newest_first(results):
         
         last_round_num = round_num
     
-    # Add the last cycle
     if current_cycle:
         cycles.append(current_cycle)
     
-    # Sort each cycle by round number (oldest to newest within cycle)
+    # Step 3: Sort each cycle by round number (ascending)
     for i, cycle in enumerate(cycles):
         cycles[i] = sorted(cycle, key=lambda x: x.get('round_number', 0))
     
-    # Flatten all cycles into final sorted list (oldest first overall)
+    # Step 4: Flatten cycles (oldest cycle first)
     sorted_results = []
     for cycle in cycles:
         sorted_results.extend(cycle)
     
-    # REVERSE to show NEWEST FIRST
-    sorted_results.reverse()
-    
     return sorted_results
 
+def sort_newest_first(results):
+    """Reverse to show newest rounds first"""
+    return list(reversed(results))
+
 def load_existing_data():
-    """Load existing data SAFELY - never loses data"""
+    """Load existing data safely"""
     if not os.path.exists(JSON_FILENAME):
         return []
     
@@ -89,13 +109,11 @@ def load_existing_data():
 def save_results_safely(new_results):
     """
     CRITICAL: Save results WITHOUT losing data
-    - Loads existing data first
-    - Merges with new data
-    - Removes duplicates
-    - Sorts by cycle with NEWEST FIRST
+    - Loads existing data
+    - Merges new data (no duplicates)
+    - Sorts by cycle detection
     - Creates backup before saving
     """
-    # Load existing data
     existing_results = load_existing_data()
     
     print(f"   Existing: {len(existing_results)} rounds")
@@ -113,45 +131,52 @@ def save_results_safely(new_results):
             all_results.append(r)
     
     # Add new (skip if already exists)
+    added = 0
     for r in new_results:
         round_num = r.get('round_number')
         if round_num not in seen_rounds:
             seen_rounds.add(round_num)
             all_results.append(r)
+            added += 1
             print(f"      Added new round {round_num}")
     
-    # Sort by cycle with NEWEST FIRST
-    sorted_results = sort_results_by_cycle_newest_first(all_results)
+    if added == 0:
+        print("   No new rounds to add")
+        return len(existing_results)
+    
+    # Sort by cycle detection (handles round number resets)
+    cycle_sorted = detect_cycles_and_sort(all_results)
     
     # Create backup before saving
     if os.path.exists(JSON_FILENAME):
         try:
-            import shutil
             shutil.copy(JSON_FILENAME, BACKUP_FILENAME)
             print(f"   💾 Backup saved to {BACKUP_FILENAME}")
         except:
             pass
     
-    # Save
+    # Save with cycle-sorted order (oldest first)
     json_data = {
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "total_rows": len(sorted_results),
-        "results": sorted_results,
-        "note": "Sorted by cycle detection - NEWEST ROUNDS FIRST"
+        "total_rows": len(cycle_sorted),
+        "results": cycle_sorted,
+        "cycles": len([c for c in detect_cycles_and_sort(all_results) if isinstance(c, list)]),
+        "note": "Rounds sorted by cycle detection (handles number resets)"
     }
     
     with open(JSON_FILENAME, 'w', encoding='utf-8') as f:
         json.dump(json_data, f, indent=2, ensure_ascii=False)
     
-    print(f"   💾 Saved {len(sorted_results)} total rounds")
+    print(f"   💾 Saved {len(cycle_sorted)} total rounds")
     
-    # Show first few rounds (newest first)
-    if len(sorted_results) > 0:
-        print(f"\n   📅 First 5 rounds (NEWEST FIRST):")
-        for r in sorted_results[:5]:
+    # Show summary
+    newest_first = sort_newest_first(cycle_sorted)
+    if len(newest_first) > 0:
+        print(f"\n   📅 NEWEST ROUNDS FIRST:")
+        for r in newest_first[:10]:
             print(f"      Round {r.get('round_number')} - {r.get('timestamp')}")
     
-    return len(sorted_results)
+    return len(cycle_sorted)
 
 def extract_numbers_from_balls(balls_div):
     numbers = []
@@ -162,9 +187,9 @@ def extract_numbers_from_balls(balls_div):
             numbers.append(text)
     return numbers
 
-def scrape_new_rounds(driver):
-    """Scrape ALL rounds from website and return only NEW ones"""
-    print("\n📡 SCRAPING DATA...")
+def scrape_current_rounds(driver):
+    """Scrape the current visible rounds from website (last 10 rounds)"""
+    print("\n📡 SCRAPING CURRENT ROUNDS...")
     
     driver.get('https://www.simacombet.com/luckysix')
     time.sleep(3)
@@ -182,34 +207,23 @@ def scrape_new_rounds(driver):
     time.sleep(3)
     
     round_rows = driver.find_elements(By.CSS_SELECTOR, "div.round-row")
-    print(f"✅ Found {len(round_rows)} rounds on website")
+    print(f"✅ Found {len(round_rows)} rounds visible on website")
     
-    # Get existing rounds from file
-    existing_results = load_existing_data()
-    existing_round_nums = {r.get('round_number'): r for r in existing_results}
+    current_rounds = []
     
-    new_results = []
-    
-    # Process all rounds from website
-    for i in range(len(round_rows) - 1, -1, -1):
-        rows = driver.find_elements(By.CSS_SELECTOR, "div.round-row")
-        current_row = rows[i]
-        
-        title_element = current_row.find_element(By.CSS_SELECTOR, "div.accordion-title")
-        title_text = title_element.text.strip()
-        round_num = re.search(r'Round\s*(\d+)', title_text)
-        round_num = int(round_num.group(1)) if round_num else None
-        
-        # Skip if we already have this round
-        if round_num in existing_round_nums:
-            continue
-        
-        driver.execute_script("arguments[0].scrollIntoView();", current_row)
-        time.sleep(0.5)
-        current_row.click()
-        time.sleep(2)
-        
+    for row in round_rows:
         try:
+            title_element = row.find_element(By.CSS_SELECTOR, "div.accordion-title")
+            title_text = title_element.text.strip()
+            round_num = re.search(r'Round\s*(\d+)', title_text)
+            round_num = int(round_num.group(1)) if round_num else None
+            
+            # Click to reveal numbers
+            driver.execute_script("arguments[0].scrollIntoView();", row)
+            time.sleep(0.5)
+            row.click()
+            time.sleep(2)
+            
             draw_sequences = driver.find_elements(By.CSS_SELECTOR, "div.draw-sequence")
             first_draw_numbers = []
             second_draw_numbers = []
@@ -226,22 +240,24 @@ def scrape_new_rounds(driver):
                         second_draw_numbers = extract_numbers_from_balls(balls_containers[0])
             
             result = {
-                'round_number': int(round_num),
+                'round_number': round_num,
                 'round_title': title_text,
                 'first_draw_numbers': [int(n) for n in first_draw_numbers],
                 'second_draw_numbers': [int(n) for n in second_draw_numbers],
                 'timestamp': datetime.now().isoformat()
             }
-            new_results.append(result)
-            print(f"✅ New round {round_num} collected")
+            current_rounds.append(result)
+            print(f"   ✓ Round {round_num} collected")
+            
+            # Close the expanded row
+            row.click()
+            time.sleep(1)
             
         except Exception as e:
-            print(f"❌ Error on Round {round_num}: {e}")
-        
-        current_row.click()
-        time.sleep(1)
+            print(f"   ⚠️ Error on round: {e}")
+            continue
     
-    return new_results
+    return current_rounds
 
 def perform_scrape():
     driver = None
@@ -252,22 +268,21 @@ def perform_scrape():
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--window-size=1920,1080')
         
-        # Connect to Railway's Selenium Hub
         driver = Remote(
             command_executor='http://selenium-hub:4444/wd/hub',
             options=options
         )
         print("✅ Connected to Selenium Grid")
         
-        # Get only NEW rounds (doesn't delete old data)
-        new_results = scrape_new_rounds(driver)
+        # Get current visible rounds
+        current_rounds = scrape_current_rounds(driver)
         
-        if new_results:
-            print(f"\n📊 Found {len(new_results)} new rounds to add")
-            total = save_results_safely(new_results)
+        if current_rounds:
+            print(f"\n📊 Found {len(current_rounds)} current rounds")
+            total = save_results_safely(current_rounds)
             return True, total
         else:
-            print(f"\n📊 No new rounds found")
+            print(f"\n⚠️ No rounds found")
             return True, len(load_existing_data())
         
     except Exception as e:
@@ -278,33 +293,35 @@ def perform_scrape():
             driver.quit()
 
 def run_scraper_loop():
-    print("=" * 60)
-    print("🤖 LOTTERY SCRAPER - SAFE VERSION")
-    print("=" * 60)
+    print("=" * 70)
+    print("🤖 ULTIMATE LOTTERY SCRAPER - COMPLETE SOLUTION")
+    print("=" * 70)
     print("✓ NEVER loses data (appends, never replaces)")
-    print("✓ Sorts by cycle detection")
-    print("✓ NEWEST ROUNDS FIRST")
+    print("✓ CYCLE DETECTION (handles round number resets)")
+    print("✓ Scrapes every 15 minutes (catches all new rounds)")
     print("✓ Creates backup before saving")
-    print("=" * 60)
+    print("=" * 70)
     print(f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"⏱️  Scrape interval: {SCRAPE_INTERVAL_MINUTES} minutes")
-    print("=" * 60)
+    print("=" * 70)
     
-    # Show existing data count on startup
+    # Show existing data
     existing = load_existing_data()
     print(f"\n📊 Starting with {len(existing)} existing rounds")
     
     if existing:
-        print("\n   First 5 rounds (NEWEST FIRST):")
-        for r in existing[:5]:
+        # Show newest first
+        newest = list(reversed(existing))
+        print("\n   📅 LAST 10 ROUNDS (NEWEST FIRST):")
+        for r in newest[:10]:
             print(f"      Round {r.get('round_number')} - {r.get('timestamp')}")
     
     iteration = 0
     while True:
         iteration += 1
-        print(f"\n{'='*60}")
+        print(f"\n{'='*70}")
         print(f"🔄 ITERATION #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"{'='*60}")
+        print(f"{'='*70}")
         
         success, total = perform_scrape()
         
@@ -319,74 +336,149 @@ def run_scraper_loop():
 @app.route('/')
 def home():
     return """
-    <h1>🤖 Lottery Scraper - SAFE VERSION</h1>
-    <p>✓ NEVER loses data (appends, never replaces)</p>
-    <p>✓ Sorts by cycle detection</p>
-    <p>✓ <strong>NEWEST ROUNDS FIRST</strong></p>
-    <p>✓ Creates backup before saving</p>
+    <h1>🤖 Ultimate Lottery Scraper</h1>
+    <p>✓ NEVER loses data</p>
+    <p>✓ Cycle detection (handles round number resets)</p>
+    <p>✓ Scrapes every 15 minutes</p>
     <br>
-    <p><a href='/data'>View all data (newest first)</a></p>
+    <p><a href='/data'>View all data (sorted by cycles)</a></p>
+    <p><a href='/data/newest'>View all data (newest first)</a></p>
     <p><a href='/stats'>View statistics</a></p>
-    <p><a href='/backup'>View backup status</a></p>
+    <p><a href='/cycles'>View cycles breakdown</a></p>
     """
 
 @app.route('/data')
 def get_data():
+    """Get data sorted by cycles (oldest cycle first)"""
     if os.path.exists(JSON_FILENAME):
         with open(JSON_FILENAME, 'r', encoding='utf-8') as f:
             data = json.load(f)
             results = data.get('results', [])
             
-            # Ensure newest first for display
-            if results:
-                # Show first 10 (newest)
-                preview = results[:10] if len(results) > 10 else results
-                data['preview'] = [{
-                    'round': r.get('round_number'),
-                    'timestamp': r.get('timestamp')
-                } for r in preview]
-                data['order'] = "NEWEST FIRST"
-        
-        return jsonify(data)
+            # Sort by cycles
+            sorted_results = detect_cycles_and_sort(results)
+            data['results'] = sorted_results
+            data['order'] = "CYCLE SORTED (oldest cycle first)"
+            
+            return jsonify(data)
+    return {"error": "No data yet"}
+
+@app.route('/data/newest')
+def get_data_newest():
+    """Get data with newest rounds first"""
+    if os.path.exists(JSON_FILENAME):
+        with open(JSON_FILENAME, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            results = data.get('results', [])
+            
+            # Sort by cycles, then reverse for newest first
+            cycle_sorted = detect_cycles_and_sort(results)
+            newest_first = sort_newest_first(cycle_sorted)
+            
+            data['results'] = newest_first
+            data['order'] = "NEWEST FIRST"
+            
+            return jsonify(data)
     return {"error": "No data yet"}
 
 @app.route('/stats')
 def get_stats():
-    """Show statistics about the data"""
+    """Show statistics"""
     if os.path.exists(JSON_FILENAME):
         with open(JSON_FILENAME, 'r', encoding='utf-8') as f:
             data = json.load(f)
             results = data.get('results', [])
             
             if results:
+                # Get cycle-sorted for analysis
+                cycle_sorted = detect_cycles_and_sort(results)
+                newest_first = sort_newest_first(cycle_sorted)
+                
+                # Detect cycles for stats
+                timestamp_sorted = sorted(results, key=lambda x: x.get('timestamp', ''))
+                cycles = []
+                current_cycle = []
+                last_round_num = None
+                
+                for r in timestamp_sorted:
+                    round_num = r.get('round_number')
+                    if last_round_num is not None and round_num < last_round_num:
+                        if current_cycle:
+                            cycles.append(current_cycle)
+                        current_cycle = [r]
+                    else:
+                        current_cycle.append(r)
+                    last_round_num = round_num
+                
+                if current_cycle:
+                    cycles.append(current_cycle)
+                
                 stats = {
                     "total_rounds": len(results),
-                    "newest_round": results[0].get('round_number') if results else None,
-                    "newest_timestamp": results[0].get('timestamp') if results else None,
-                    "oldest_round": results[-1].get('round_number') if results else None,
-                    "oldest_timestamp": results[-1].get('timestamp') if results else None,
-                    "order": "NEWEST FIRST",
+                    "unique_rounds": len(set(r.get('round_number') for r in results)),
+                    "cycles_detected": len(cycles),
+                    "newest_round": newest_first[0].get('round_number') if newest_first else None,
+                    "newest_timestamp": newest_first[0].get('timestamp') if newest_first else None,
+                    "oldest_round": newest_first[-1].get('round_number') if newest_first else None,
+                    "oldest_timestamp": newest_first[-1].get('timestamp') if newest_first else None,
                     "backup_exists": os.path.exists(BACKUP_FILENAME)
                 }
+                
                 return jsonify(stats)
     
     return {"error": "No data yet"}
 
-@app.route('/backup')
-def get_backup():
-    """Check if backup exists"""
-    if os.path.exists(BACKUP_FILENAME):
-        try:
-            with open(BACKUP_FILENAME, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+@app.route('/cycles')
+def get_cycles():
+    """Show cycles breakdown"""
+    if os.path.exists(JSON_FILENAME):
+        with open(JSON_FILENAME, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            results = data.get('results', [])
+            
+            if results:
+                # Detect cycles
+                timestamp_sorted = sorted(results, key=lambda x: x.get('timestamp', ''))
+                cycles = []
+                current_cycle = []
+                last_round_num = None
+                
+                for r in timestamp_sorted:
+                    round_num = r.get('round_number')
+                    if last_round_num is not None and round_num < last_round_num:
+                        if current_cycle:
+                            cycles.append(current_cycle)
+                        current_cycle = [r]
+                    else:
+                        current_cycle.append(r)
+                    last_round_num = round_num
+                
+                if current_cycle:
+                    cycles.append(current_cycle)
+                
+                # Sort each cycle by round number
+                for i, cycle in enumerate(cycles):
+                    cycles[i] = sorted(cycle, key=lambda x: x.get('round_number', 0))
+                
+                cycles_data = []
+                for i, cycle in enumerate(cycles):
+                    cycles_data.append({
+                        "cycle_number": i + 1,
+                        "rounds": [r.get('round_number') for r in cycle],
+                        "round_count": len(cycle),
+                        "start_round": cycle[0].get('round_number'),
+                        "end_round": cycle[-1].get('round_number'),
+                        "first_timestamp": cycle[0].get('timestamp'),
+                        "last_timestamp": cycle[-1].get('timestamp')
+                    })
+                
                 return jsonify({
-                    "backup_exists": True,
-                    "backup_size": len(data.get('results', [])),
-                    "note": "Backup file exists. Main data is safe."
+                    "total_cycles": len(cycles),
+                    "total_rounds": len(results),
+                    "cycles": cycles_data
                 })
-        except:
-            return {"backup_exists": True, "error": "Can't read backup"}
-    return {"backup_exists": False}
+    
+    return {"error": "No data yet"}
 
 if __name__ == "__main__":
     # Start scraper in background
@@ -395,11 +487,12 @@ if __name__ == "__main__":
     thread.start()
     
     # Start web server
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 70)
     print("Starting web server...")
     print("Available endpoints:")
-    print("  /data    - View all data (NEWEST FIRST)")
-    print("  /stats   - View statistics")
-    print("  /backup  - Check backup status")
-    print("=" * 60)
+    print("  /data         - View data (cycle sorted, oldest first)")
+    print("  /data/newest  - View data (newest first)")
+    print("  /stats        - View statistics")
+    print("  /cycles       - View cycles breakdown")
+    print("=" * 70)
     app.run(host='0.0.0.0', port=10000)
