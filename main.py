@@ -1,9 +1,4 @@
-"""
-ULTIMATE LOTTERY SCRAPER - SORT BY ROUND NUMBER
-Rounds sorted by round number (highest first = newest)
-"""
-
-from selenium import webdriver
+  from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -13,7 +8,6 @@ import time
 import json
 import os
 import re
-import shutil
 from datetime import datetime
 from flask import Flask, jsonify
 import threading
@@ -27,26 +21,15 @@ BACKUP_FILENAME = "results_backup.json"
 app = Flask(__name__)
 
 def sort_by_round_number(results):
-    """
-    SIMPLE FIX: Sort rounds by round number (highest first = newest)
-    This works because:
-    1. Website shows rounds sequentially (1,2,3... up to 289, then resets to 1)
-    2. Higher round number = more recent
-    3. No need for complex cycle detection
-    """
+    """Sort rounds by round number (highest first = newest)"""
     if not results:
         return results
-    
-    # Sort by round number descending (largest first = newest)
-    sorted_results = sorted(results, key=lambda x: x.get('round_number', 0), reverse=True)
-    
-    return sorted_results
+    return sorted(results, key=lambda x: x.get('round_number', 0), reverse=True)
 
 def load_existing_data():
     """Load existing data"""
     if not os.path.exists(JSON_FILENAME):
         return []
-    
     try:
         with open(JSON_FILENAME, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -58,24 +41,22 @@ def load_existing_data():
         return []
 
 def save_results_safely(new_results):
-    """Save results - append new, no duplicates, sort by round number"""
+    """Save results - append new, no duplicates"""
     existing_results = load_existing_data()
     
     print(f"   Existing: {len(existing_results)} rounds")
     print(f"   New: {len(new_results)} rounds")
     
-    # Merge: keep existing + add new (no duplicates by round_number)
+    # Merge
     all_results = []
     seen_rounds = set()
     
-    # Add existing first
     for r in existing_results:
         round_num = r.get('round_number')
         if round_num not in seen_rounds:
             seen_rounds.add(round_num)
             all_results.append(r)
     
-    # Add new (skip if already exists)
     added = 0
     for r in new_results:
         round_num = r.get('round_number')
@@ -86,17 +67,16 @@ def save_results_safely(new_results):
             print(f"      Added new round {round_num}")
     
     if added == 0:
-        print("   No new rounds to add")
         return len(existing_results)
     
-    # CRITICAL: Sort by round number (highest first = newest)
+    # Sort by round number
     sorted_results = sort_by_round_number(all_results)
     
-    # Create backup before saving
+    # Create backup
     if os.path.exists(JSON_FILENAME):
         try:
+            import shutil
             shutil.copy(JSON_FILENAME, BACKUP_FILENAME)
-            print(f"   💾 Backup saved to {BACKUP_FILENAME}")
         except:
             pass
     
@@ -112,13 +92,6 @@ def save_results_safely(new_results):
         json.dump(json_data, f, indent=2, ensure_ascii=False)
     
     print(f"   💾 Saved {len(sorted_results)} total rounds")
-    
-    # Show first 5 rounds (newest)
-    if len(sorted_results) > 0:
-        print(f"\n   📅 NEWEST ROUNDS FIRST (by round number):")
-        for r in sorted_results[:5]:
-            print(f"      Round {r.get('round_number')} - {r.get('timestamp')}")
-    
     return len(sorted_results)
 
 def extract_numbers_from_balls(balls_div):
@@ -131,7 +104,7 @@ def extract_numbers_from_balls(balls_div):
     return numbers
 
 def scrape_current_rounds(driver):
-    """Scrape the current visible rounds from website (last 10 rounds)"""
+    """Scrape current rounds"""
     print("\n📡 SCRAPING DATA...")
     
     driver.get('https://www.simacombet.com/luckysix')
@@ -150,9 +123,12 @@ def scrape_current_rounds(driver):
     time.sleep(3)
     
     round_rows = driver.find_elements(By.CSS_SELECTOR, "div.round-row")
-    print(f"✅ Found {len(round_rows)} rounds visible on website")
+    print(f"✅ Found {len(round_rows)} rounds")
     
-    current_rounds = []
+    existing_results = load_existing_data()
+    existing_round_nums = {r.get('round_number'): r for r in existing_results}
+    
+    new_results = []
     
     for row in round_rows:
         try:
@@ -160,6 +136,9 @@ def scrape_current_rounds(driver):
             title_text = title_element.text.strip()
             round_num = re.search(r'Round\s*(\d+)', title_text)
             round_num = int(round_num.group(1)) if round_num else None
+            
+            if round_num in existing_round_nums:
+                continue
             
             driver.execute_script("arguments[0].scrollIntoView();", row)
             time.sleep(0.5)
@@ -188,8 +167,8 @@ def scrape_current_rounds(driver):
                 'second_draw_numbers': [int(n) for n in second_draw_numbers],
                 'timestamp': datetime.now().isoformat()
             }
-            current_rounds.append(result)
-            print(f"   ✓ Round {round_num} collected")
+            new_results.append(result)
+            print(f"   ✅ Round {round_num} collected")
             
             row.click()
             time.sleep(1)
@@ -198,31 +177,47 @@ def scrape_current_rounds(driver):
             print(f"   ⚠️ Error on round: {e}")
             continue
     
-    return current_rounds
+    return new_results
 
-def perform_scrape():
-    driver = None
+def create_driver():
+    """Create new driver with retry"""
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920,1080')
+    
     try:
-        options = Options()
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--window-size=1920,1080')
-        
         driver = Remote(
             command_executor='http://selenium-hub:4444/wd/hub',
             options=options
         )
+        return driver
+    except Exception as e:
+        print(f"   ⚠️ Failed to connect: {e}")
+        return None
+
+def perform_scrape():
+    """Perform scrape with session recovery"""
+    driver = None
+    
+    try:
+        driver = create_driver()
+        if not driver:
+            print("❌ Could not connect to Selenium Grid")
+            return False, 0
+        
         print("✅ Connected to Selenium Grid")
         
+        # Get current rounds
         current_rounds = scrape_current_rounds(driver)
         
         if current_rounds:
-            print(f"\n📊 Found {len(current_rounds)} current rounds")
+            print(f"\n📊 Found {len(current_rounds)} new rounds")
             total = save_results_safely(current_rounds)
             return True, total
         else:
-            print(f"\n⚠️ No rounds found")
+            print(f"\n📊 No new rounds found")
             return True, len(load_existing_data())
         
     except Exception as e:
@@ -230,15 +225,17 @@ def perform_scrape():
         return False, 0
     finally:
         if driver:
-            driver.quit()
+            try:
+                driver.quit()
+            except:
+                pass
 
 def run_scraper_loop():
     print("=" * 70)
-    print("🤖 LOTTERY SCRAPER - SORT BY ROUND NUMBER")
+    print("🤖 LOTTERY SCRAPER - WITH SESSION RECOVERY")
     print("=" * 70)
-    print("✓ NEVER loses data (appends, never replaces)")
-    print("✓ Sorts by ROUND NUMBER (highest first = newest)")
-    print("✓ No complex cycle detection needed")
+    print("✓ Auto-reconnects if session fails")
+    print("✓ Never loses data")
     print("=" * 70)
     print(f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"⏱️  Scrape interval: {SCRAPE_INTERVAL_MINUTES} minutes")
@@ -247,13 +244,9 @@ def run_scraper_loop():
     existing = load_existing_data()
     print(f"\n📊 Starting with {len(existing)} existing rounds")
     
-    if existing:
-        sorted_existing = sort_by_round_number(existing)
-        print("\n   📅 NEWEST ROUNDS FIRST (by round number):")
-        for r in sorted_existing[:5]:
-            print(f"      Round {r.get('round_number')} - {r.get('timestamp')}")
-    
     iteration = 0
+    consecutive_failures = 0
+    
     while True:
         iteration += 1
         print(f"\n{'='*70}")
@@ -263,24 +256,23 @@ def run_scraper_loop():
         success, total = perform_scrape()
         
         if success:
+            consecutive_failures = 0
             print(f"\n✅ Scrape successful! Total rounds: {total}")
         else:
-            print(f"\n⚠️ Scrape failed")
+            consecutive_failures += 1
+            print(f"\n⚠️ Scrape failed ({consecutive_failures})")
+            
+            if consecutive_failures >= 5:
+                print("   Too many failures, waiting 10 minutes...")
+                time.sleep(600)
+                consecutive_failures = 0
         
         print(f"\n💤 Sleeping for {SCRAPE_INTERVAL_MINUTES} minutes...")
         time.sleep(SCRAPE_INTERVAL_MINUTES * 60)
 
 @app.route('/')
 def home():
-    return """
-    <h1>🤖 Lottery Scraper - Sorted by Round Number</h1>
-    <p>✓ NEVER loses data</p>
-    <p>✓ Sorted by ROUND NUMBER (highest first = newest)</p>
-    <p>✓ No complex cycle detection needed</p>
-    <br>
-    <p><a href='/data'>View all data (newest first)</a></p>
-    <p><a href='/stats'>View statistics</a></p>
-    """
+    return "<h1>Lottery Scraper</h1><p><a href='/data'>View data</a></p><p><a href='/stats'>View stats</a></p>"
 
 @app.route('/data')
 def get_data():
@@ -288,16 +280,9 @@ def get_data():
         with open(JSON_FILENAME, 'r', encoding='utf-8') as f:
             data = json.load(f)
             results = data.get('results', [])
-            
-            # Sort by round number for display
             sorted_results = sort_by_round_number(results)
             data['results'] = sorted_results
-            data['order'] = "ROUND NUMBER DESCENDING (newest first)"
-            
-            # Show preview
-            data['preview'] = [{'round': r.get('round_number')} for r in sorted_results[:10]]
-            
-        return jsonify(data)
+            return jsonify(data)
     return {"error": "No data yet"}
 
 @app.route('/stats')
@@ -306,18 +291,13 @@ def get_stats():
         with open(JSON_FILENAME, 'r', encoding='utf-8') as f:
             data = json.load(f)
             results = data.get('results', [])
-            
-            if results:
-                sorted_results = sort_by_round_number(results)
-                stats = {
-                    "total_rounds": len(results),
-                    "newest_round": sorted_results[0].get('round_number') if sorted_results else None,
-                    "oldest_round": sorted_results[-1].get('round_number') if sorted_results else None,
-                    "order": "ROUND NUMBER DESCENDING (newest first)",
-                    "backup_exists": os.path.exists(BACKUP_FILENAME)
-                }
-                return jsonify(stats)
-    
+            sorted_results = sort_by_round_number(results)
+            stats = {
+                "total_rounds": len(results),
+                "newest_round": sorted_results[0].get('round_number') if sorted_results else None,
+                "oldest_round": sorted_results[-1].get('round_number') if sorted_results else None
+            }
+            return jsonify(stats)
     return {"error": "No data yet"}
 
 if __name__ == "__main__":
@@ -325,10 +305,5 @@ if __name__ == "__main__":
     thread.daemon = True
     thread.start()
     
-    print("\n" + "=" * 70)
-    print("Starting web server...")
-    print("Available endpoints:")
-    print("  /data   - View all data (newest first)")
-    print("  /stats  - View statistics")
-    print("=" * 70)
-    app.run(host='0.0.0.0', port=10000) 
+    print("\nStarting web server...")
+    app.run(host='0.0.0.0', port=10000)
