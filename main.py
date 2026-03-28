@@ -7,6 +7,7 @@ import time
 import json
 import os
 import re
+import subprocess
 from datetime import datetime
 from flask import Flask, jsonify
 import threading
@@ -17,6 +18,25 @@ JSON_FILENAME = "results.json"
 # ==========================================
 
 app = Flask(__name__)
+
+def install_chrome():
+    """Install Chrome and ChromeDriver"""
+    print("   📦 Installing Chrome...")
+    try:
+        # Install Chrome
+        subprocess.run(['apt-get', 'update', '-qq'], check=False, capture_output=True)
+        subprocess.run(['apt-get', 'install', '-y', '-qq', 'wget', 'unzip', 'curl'], check=False, capture_output=True)
+        
+        # Download Chrome
+        subprocess.run(['wget', '-q', 'https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb'], check=False, capture_output=True)
+        subprocess.run(['dpkg', '-i', 'google-chrome-stable_current_amd64.deb'], check=False, capture_output=True)
+        subprocess.run(['apt-get', 'install', '-y', '-f', '-qq'], check=False, capture_output=True)
+        
+        print("   ✅ Chrome installed")
+        return True
+    except Exception as e:
+        print(f"   ⚠️ Chrome install error: {e}")
+        return False
 
 def sort_by_round_number(results):
     if not results:
@@ -72,7 +92,7 @@ def extract_numbers_from_balls(balls_div):
     return numbers
 
 def scrape_rounds():
-    """Scrape rounds directly without Selenium Grid"""
+    """Scrape rounds directly"""
     driver = None
     try:
         options = Options()
@@ -81,6 +101,8 @@ def scrape_rounds():
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-gpu')
+        options.add_argument('--disable-logging')
+        options.add_argument('--log-level=3')
         
         driver = webdriver.Chrome(options=options)
         print("   ✅ Chrome started")
@@ -173,12 +195,14 @@ def run_scraper_loop():
     print("=" * 70)
     print("🤖 LOTTERY SCRAPER - DIRECT CHROME")
     print("=" * 70)
-    print("   ✓ No Selenium Grid needed")
     print("   ✓ Direct Chrome connection")
     print("=" * 70)
     print(f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"⏱️  Scrape interval: {SCRAPE_INTERVAL_MINUTES} minutes")
     print("=" * 70)
+    
+    # Install Chrome on first run
+    install_chrome()
     
     existing = load_existing_data()
     print(f"\n📊 Starting with {len(existing)} rounds")
