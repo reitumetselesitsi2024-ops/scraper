@@ -15,7 +15,7 @@ from flask import Flask, jsonify
 import threading
 
 # ============= CONFIGURATION =============
-SCRAPE_INTERVAL_MINUTES = 15
+SCRAPE_INTERVAL_MINUTES = 27
 JSON_FILENAME = "results.json"
 # ==========================================
 
