@@ -8,13 +8,16 @@ import json
 import os
 import re
 import subprocess
+import tempfile
+import uuid
 from datetime import datetime
 from flask import Flask, jsonify
 import threading
 
 # ============= CONFIGURATION =============
-SCRAPE_INTERVAL_MINUTES = 15
+SCRAPE_INTERVAL_MINUTES = 27
 JSON_FILENAME = "results.json"
+MAX_CONSECUTIVE_FAILURES = 3
 # ==========================================
 
 app = Flask(__name__)
@@ -23,20 +26,58 @@ def install_chrome():
     """Install Chrome and ChromeDriver"""
     print("   📦 Installing Chrome...")
     try:
-        # Install Chrome
         subprocess.run(['apt-get', 'update', '-qq'], check=False, capture_output=True)
         subprocess.run(['apt-get', 'install', '-y', '-qq', 'wget', 'unzip', 'curl'], check=False, capture_output=True)
         
-        # Download Chrome
+        # Install Chrome
         subprocess.run(['wget', '-q', 'https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb'], check=False, capture_output=True)
         subprocess.run(['dpkg', '-i', 'google-chrome-stable_current_amd64.deb'], check=False, capture_output=True)
         subprocess.run(['apt-get', 'install', '-y', '-f', '-qq'], check=False, capture_output=True)
         
-        print("   ✅ Chrome installed")
+        # Install matching ChromeDriver
+        subprocess.run(['wget', '-q', 'https://storage.googleapis.com/chrome-for-testing-public/146.0.7680.165/linux64/chromedriver-linux64.zip'], check=False, capture_output=True)
+        subprocess.run(['unzip', '-q', '-o', 'chromedriver-linux64.zip'], check=False, capture_output=True)
+        subprocess.run(['mv', 'chromedriver-linux64/chromedriver', '/usr/local/bin/'], check=False, capture_output=True)
+        subprocess.run(['chmod', '+x', '/usr/local/bin/chromedriver'], check=False, capture_output=True)
+        
+        # Create cache directory
+        subprocess.run(['mkdir', '-p', '/.cache/selenium'], check=False, capture_output=True)
+        subprocess.run(['chmod', '777', '/.cache/selenium'], check=False, capture_output=True)
+        
+        print("   ✅ Chrome and ChromeDriver installed")
         return True
     except Exception as e:
         print(f"   ⚠️ Chrome install error: {e}")
         return False
+
+def create_driver():
+    """Create a fresh Chrome driver with unique temp directory"""
+    try:
+        # Create unique temp directory for this instance
+        unique_id = uuid.uuid4().hex[:8]
+        user_data_dir = tempfile.mkdtemp(prefix=f'chrome-{unique_id}-')
+        
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--disable-software-rasterizer')
+        options.add_argument('--disable-extensions')
+        options.add_argument('--disable-setuid-sandbox')
+        options.add_argument('--remote-debugging-port=9222')
+        options.add_argument(f'--user-data-dir={user_data_dir}')
+        options.add_argument('--disable-logging')
+        options.add_argument('--log-level=3')
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        
+        driver = webdriver.Chrome(options=options)
+        driver.set_page_load_timeout(60)
+        return driver
+    except Exception as e:
+        print(f"   ❌ Failed to create driver: {e}")
+        return None
 
 def sort_by_round_number(results):
     if not results:
@@ -56,7 +97,7 @@ def load_existing_data():
 def save_results(new_results):
     existing = load_existing_data()
     
-    # Merge
+    # Merge - no duplicates
     seen = set()
     all_results = []
     for r in existing:
@@ -69,9 +110,18 @@ def save_results(new_results):
         if num not in seen:
             seen.add(num)
             all_results.append(r)
+            print(f"      Added new round {num}")
     
     # Sort by round number (newest first)
     all_results.sort(key=lambda x: x.get('round_number', 0), reverse=True)
+    
+    # Create backup
+    if os.path.exists(JSON_FILENAME):
+        try:
+            import shutil
+            shutil.copy(JSON_FILENAME, f"{JSON_FILENAME}.backup")
+        except:
+            pass
     
     with open(JSON_FILENAME, 'w', encoding='utf-8') as f:
         json.dump({
@@ -91,23 +141,11 @@ def extract_numbers_from_balls(balls_div):
             numbers.append(text)
     return numbers
 
-def scrape_rounds():
-    """Scrape rounds directly"""
-    driver = None
+def scrape_rounds(driver):
+    """Scrape current rounds using the provided driver"""
     try:
-        options = Options()
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--disable-logging')
-        options.add_argument('--log-level=3')
-        
-        driver = webdriver.Chrome(options=options)
-        print("   ✅ Chrome started")
-        
         driver.get('https://www.simacombet.com/luckysix')
+        driver.set_page_load_timeout(30)
         time.sleep(3)
         
         iframe = WebDriverWait(driver, 10).until(
@@ -118,7 +156,7 @@ def scrape_rounds():
         button = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Results')]"))
         )
-        button.click()
+        driver.execute_script("arguments[0].click();", button)
         time.sleep(2)
         
         round_rows = driver.find_elements(By.CSS_SELECTOR, "div.round-row")
@@ -173,29 +211,19 @@ def scrape_rounds():
                 print(f"   ⚠️ Error on round: {e}")
                 continue
         
-        if new_rounds:
-            total = save_results(new_rounds)
-            print(f"   💾 Saved {len(new_rounds)} new rounds. Total: {total}")
-        else:
-            print("   No new rounds found")
-        
-        return True, len(load_existing_data())
+        return new_rounds
         
     except Exception as e:
-        print(f"   ❌ Error: {e}")
-        return False, 0
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except:
-                pass
+        print(f"   ❌ Scrape error: {e}")
+        return None
 
 def run_scraper_loop():
     print("=" * 70)
-    print("🤖 LOTTERY SCRAPER - DIRECT CHROME")
+    print("🤖 LOTTERY SCRAPER - AUTO-RECOVERY VERSION")
     print("=" * 70)
-    print("   ✓ Direct Chrome connection")
+    print("   ✓ Auto-recovery on failures")
+    print("   ✓ Fresh Chrome on each recovery")
+    print("   ✓ No data loss")
     print("=" * 70)
     print(f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"⏱️  Scrape interval: {SCRAPE_INTERVAL_MINUTES} minutes")
@@ -208,23 +236,90 @@ def run_scraper_loop():
     print(f"\n📊 Starting with {len(existing)} rounds")
     
     iteration = 0
+    consecutive_failures = 0
+    driver = None
+    
     while True:
         iteration += 1
-        print(f"\n🔄 ITERATION #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"\n{'='*70}")
+        print(f"🔄 ITERATION #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"{'='*70}")
         
-        success, total = scrape_rounds()
+        # Create driver if needed
+        if driver is None:
+            print("   Creating new Chrome driver...")
+            driver = create_driver()
+            if driver is None:
+                print("   ❌ Failed to create driver")
+                consecutive_failures += 1
+                time.sleep(60)
+                continue
         
-        if success:
-            print(f"✅ Scrape successful! Total: {total}")
-        else:
-            print(f"⚠️ Scrape failed")
+        try:
+            # Scrape rounds
+            new_rounds = scrape_rounds(driver)
+            
+            if new_rounds is not None:
+                if new_rounds:
+                    total = save_results(new_rounds)
+                    print(f"   💾 Saved {len(new_rounds)} new rounds. Total: {total}")
+                    consecutive_failures = 0
+                else:
+                    print("   No new rounds found")
+                    consecutive_failures = 0
+                
+                print(f"✅ Scrape successful! Total rounds: {len(load_existing_data())}")
+                
+            else:
+                # Scrape failed
+                consecutive_failures += 1
+                print(f"⚠️ Scrape failed ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+                
+                # Close old driver
+                if driver:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                    driver = None
+                
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    print("   Too many failures, waiting 5 minutes before retry...")
+                    time.sleep(300)
+                    consecutive_failures = 0
+                
+        except Exception as e:
+            consecutive_failures += 1
+            print(f"❌ Error: {e}")
+            
+            # Close old driver
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+                driver = None
+            
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                print("   Too many failures, waiting 5 minutes...")
+                time.sleep(300)
+                consecutive_failures = 0
         
-        print(f"\n💤 Sleeping {SCRAPE_INTERVAL_MINUTES} minutes...")
+        # Sleep between iterations
+        print(f"\n💤 Sleeping for {SCRAPE_INTERVAL_MINUTES} minutes...")
         time.sleep(SCRAPE_INTERVAL_MINUTES * 60)
 
 @app.route('/')
 def home():
-    return "<h1>Lottery Scraper</h1><p><a href='/data'>View data</a></p>"
+    return """
+    <h1>🤖 Lottery Scraper - Auto-Recovery</h1>
+    <p>✓ Auto-recovery on failures</p>
+    <p>✓ Fresh Chrome on each recovery</p>
+    <p>✓ No data loss</p>
+    <br>
+    <p><a href='/data'>View all data</a></p>
+    <p><a href='/stats'>View statistics</a></p>
+    """
 
 @app.route('/data')
 def get_data():
@@ -235,6 +330,21 @@ def get_data():
             results.sort(key=lambda x: x.get('round_number', 0), reverse=True)
             data['results'] = results
             return jsonify(data)
+    return {"error": "No data"}
+
+@app.route('/stats')
+def get_stats():
+    if os.path.exists(JSON_FILENAME):
+        with open(JSON_FILENAME, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            results = data.get('results', [])
+            stats = {
+                "total_rounds": len(results),
+                "newest_round": results[0].get('round_number') if results else None,
+                "oldest_round": results[-1].get('round_number') if results else None,
+                "backup_exists": os.path.exists(f"{JSON_FILENAME}.backup")
+            }
+            return jsonify(stats)
     return {"error": "No data"}
 
 if __name__ == "__main__":
